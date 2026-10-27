@@ -136,13 +136,51 @@ def generate_demo_dataset(output_dir: str | Path) -> Path:
     for g in ifn_stimulated_genes:
         counts[stim_mask, gene_to_idx[g]] += rng.poisson(lam=12.0, size=int(stim_mask.sum()))
 
+    # Generate 2D spatial coordinates, tissue regions, deconvolution proportions, and SpatialCellChat fields
+    angles = rng.uniform(0, 2 * np.pi, size=n_cells)
+    radii = rng.uniform(5.0, 95.0, size=n_cells)
+    ct_to_center = {
+        "CD4 T": (25.0, 25.0),
+        "CD8 T": (35.0, 70.0),
+        "B Cells": (75.0, 25.0),
+        "NK Cells": (50.0, 50.0),
+        "CD14 Monocytes": (75.0, 75.0),
+        "Dendritic Cells": (60.0, 65.0),
+    }
+    x_coords = np.zeros(n_cells, dtype=np.float64)
+    y_coords = np.zeros(n_cells, dtype=np.float64)
+    for i in range(n_cells):
+        cx, cy = ct_to_center[cell_ct[i]]
+        x_coords[i] = cx + rng.normal(0.0, 14.0) + 0.05 * radii[i] * np.cos(angles[i])
+        y_coords[i] = cy + rng.normal(0.0, 14.0) + 0.05 * radii[i] * np.sin(angles[i])
+
+    regions = np.where(
+        y_coords > 55.0,
+        "Myeloid_Zone",
+        np.where(x_coords < 50.0, "T_Cell_Zone", "B_Follicle_Zone"),
+    )
+
+    # Synthetic spot-level cell-type deconvolution proportions (dominant cell type + local admixture)
+    prop_mat = rng.dirichlet(np.ones(len(cell_types)) * 0.35, size=n_cells)
+    for i, ct in enumerate(cell_ct):
+        ct_idx = cell_types.index(ct)
+        prop_mat[i, ct_idx] += 1.6
+    prop_mat = prop_mat / prop_mat.sum(axis=1, keepdims=True)
+
+    obs_dict: dict[str, object] = {
+        "sample": pd.Categorical(cell_sample),
+        "condition": pd.Categorical(cell_condition),
+        "cell_type": pd.Categorical(cell_ct),
+        "region": pd.Categorical(regions),
+        "batch": pd.Categorical(cell_batch),
+        "x_cent": x_coords.astype(np.float32),
+        "y_cent": y_coords.astype(np.float32),
+    }
+    for j, ct in enumerate(cell_types):
+        obs_dict[ct] = prop_mat[:, j].astype(np.float32)
+
     obs = pd.DataFrame(
-        {
-            "sample": pd.Categorical(cell_sample),
-            "condition": pd.Categorical(cell_condition),
-            "cell_type": pd.Categorical(cell_ct),
-            "batch": pd.Categorical(cell_batch),
-        },
+        obs_dict,
         index=[f"CELL_{i:04d}" for i in range(n_cells)],
     )
     var = pd.DataFrame(index=pd.Index(all_genes, name="gene"))
@@ -153,11 +191,32 @@ def generate_demo_dataset(output_dir: str | Path) -> Path:
         var=var,
         layers={"counts": sp.csr_matrix(counts.copy())},
     )
+    adata.obsm["spatial"] = np.column_stack([x_coords, y_coords])
+    adata.obsm["cell_type_proportions"] = pd.DataFrame(
+        prop_mat, index=adata.obs_names, columns=cell_types
+    )
+
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.tl.pca(adata, n_comps=25)
     sc.pp.neighbors(adata, n_neighbors=15, n_pcs=20, random_state=42)
     sc.tl.umap(adata, random_state=42)
+
+    # Precompute SpatialCellChat-style communication fields for CXCL and MHC-II signaling pathways
+    from scexplore.spatial import compute_communication_field_from_lr_genes
+
+    compute_communication_field_from_lr_genes(
+        adata,
+        ligand_genes=["CXCL10", "CCL5", "CCL4"],
+        receptor_genes=["CCR7", "CD4", "CD8A"],
+        signaling_name="CXCL_CCL",
+    )
+    compute_communication_field_from_lr_genes(
+        adata,
+        ligand_genes=["HLA-DRA", "HLA-DPA1", "HLA-DRB1"],
+        receptor_genes=["CD4", "CD3D", "CD3E"],
+        signaling_name="MHC-II",
+    )
 
     adata.write_h5ad(out_path)
     return out_path

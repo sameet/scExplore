@@ -31,6 +31,10 @@ It is designed to run smoothly on any standard laptop or workstation and support
 9. **Consistent Color Palettes & Customizable Gradients**:
    - On initial data load, persistent discrete color maps are automatically created for **Cell Annotations** (`Paired` palette), **Samples** (`Dark2` palette), and **Conditions** (`Accent` palette).
    - Continuous expression and module score plots initialize with the reverse `RdGy` (`RdGy_r`) gradient, with an interactive dropdown allowing users to choose from multiple gradients (`RdGy_r`, `RdGy`, `Viridis`, `Plasma`, `Magma`, `Inferno`, `Cividis`, `RdBu_r`, `YlOrRd`, `Blues`, `Reds`).
+10. **Spatial Transcriptomics & SpatialCellChat Communication Explorer**:
+    - **Spatial Scatter Pie Plots (`visualizePie`)**: Interactive scatter pie visualization of spot-level deconvolution proportions or gridded single-cell compositions (`makeGridSpatialCellChat`), with controls to filter by **specific tissue regions** (metadata categories or spatial X/Y bounding boxes) and **specific cell types**.
+    - **SpatialCellChat Analysis Object Support**: Directly load or attach precomputed `SpatialCellChat` `.rds` or `.h5ad` objects (supporting `netP` and `net` communication fields, `spatstat.sparse::sparse3Darray` objects, and `prob.cell` matrices).
+    - **Communication Field (`netVisual_CommunField`) & Communication Field Grid (`netVisual_CommunFieldGrid`)**: Interactive cell-level vector field plots and gridded/smoothed communication flow plots for outgoing and incoming signaling pathways, plus on-demand Ligand–Receptor spatial communication field computation.
 
 ---
 

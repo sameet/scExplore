@@ -24,6 +24,15 @@ from scexplore.plotting import (
     plot_gene_violin,
     resolve_discrete_color_map,
 )
+from scexplore.spatial import (
+    compute_communication_field_from_lr_genes,
+    get_available_communication_signaling,
+    get_cell_type_proportions,
+    is_spatial_dataset,
+    plot_communication_field,
+    plot_communication_field_grid,
+    plot_scatter_pie,
+)
 
 
 def test_end_to_end_workflow() -> None:
@@ -99,6 +108,37 @@ def test_end_to_end_workflow() -> None:
 
         fig_v_ct = plot_gene_violin(adata, expr, x_col="cell_type", color_col="condition")
         assert len(fig_v_ct.data) > 0
+
+        # Check spatial detection, Scatter Pie (with region and cell-type subsetting), and SpatialCellChat fields
+        assert is_spatial_dataset(adata)
+        reg_mask = adata.obs["region"].astype(str).isin(["T_Cell_Zone", "B_Follicle_Zone"]).to_numpy()
+        sub_adata = adata[reg_mask]
+        props_df, coords_df = get_cell_type_proportions(sub_adata, cell_type_col="cell_type", grid_bins=10)
+        fig_pie = plot_scatter_pie(
+            props_df,
+            coords_df,
+            selected_cell_types=["CD4 T", "CD8 T", "B Cells"],
+            color_map=ct_cmap,
+        )
+        assert len(fig_pie.data) > 0
+
+        avail_sig = get_available_communication_signaling(adata)
+        assert "netP" in avail_sig and "CXCL_CCL" in avail_sig["netP"]
+
+        fig_cf = plot_communication_field(adata, signaling="CXCL_CCL", slot_name="netP", pattern="outgoing")
+        assert len(fig_cf.data) > 0
+
+        fig_cfg = plot_communication_field_grid(
+            adata, signaling="CXCL_CCL", slot_name="netP", pattern="incoming", grid_bins=12
+        )
+        assert len(fig_cfg.data) > 0
+
+        # Test computing a new communication field on-demand
+        out_v, in_v = compute_communication_field_from_lr_genes(
+            adata, ["CD3D", "CD3E"], ["HLA-DRA"], signaling_name="Test_LR"
+        )
+        assert out_v.shape == (adata.n_obs, 2)
+        assert in_v.shape == (adata.n_obs, 2)
 
 
 if __name__ == "__main__":

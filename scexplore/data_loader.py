@@ -219,6 +219,131 @@ def _parse_seurat_rds(raw_rds: dict[str, Any]) -> ad.AnnData:
                 except Exception:
                     continue
 
+    # 4. Extract spatial coordinates from Seurat @images if present
+    if "images" in attrs and attrs["images"].get("type") != "null":
+        img_list = attrs["images"].get("data", [])
+        for img_obj in img_list:
+            img_attrs = img_obj.get("attributes") or {}
+            # VisiumV1 / SlideSeq: @coordinates data.frame
+            if "coordinates" in img_attrs and img_attrs["coordinates"].get("type") != "null":
+                try:
+                    cdf = _dispatcher(img_attrs["coordinates"]).to_pandas()
+                    cols_lower = {c.lower(): c for c in cdf.columns}
+                    for cx, cy in [("imagecol", "imagerow"), ("x", "y"), ("col", "row")]:
+                        if cx in cols_lower and cy in cols_lower and len(cdf) == n_cells:
+                            adata.obsm["spatial"] = cdf[[cols_lower[cx], cols_lower[cy]]].to_numpy(dtype=np.float64)
+                            break
+                except Exception:
+                    pass
+            # FOV / Centroids (Seurat v5 Xenium / CosMx / Vizgen)
+            if "spatial" not in adata.obsm and "boundaries" in img_attrs:
+                try:
+                    b_data = img_attrs["boundaries"].get("data", [])
+                    if b_data:
+                        coords_slot = b_data[0].get("attributes", {}).get("coords")
+                        if coords_slot:
+                            c_mat, _, _ = _extract_matrix_and_dimnames(coords_slot)
+                            c_arr = np.asarray(c_mat, dtype=np.float64)
+                            if c_arr.shape[0] == n_cells and c_arr.shape[1] >= 2:
+                                adata.obsm["spatial"] = c_arr[:, :2]
+                except Exception:
+                    pass
+
+    return adata
+
+
+def _parse_spatial_cellchat_rds(raw_rds: dict[str, Any]) -> ad.AnnData:
+    """Convert a SpatialCellChat or CellChat RDS object directly into an AnnData object with spatial fields."""
+    from scexplore.spatial import extract_spatial_cellchat_dict
+
+    attrs = raw_rds.get("attributes", {})
+    scc_data = extract_spatial_cellchat_dict(raw_rds)
+
+    # Extract expression matrix from data, data.signaling, or data.raw
+    X_mat = None
+    gene_names: list[str] | None = None
+    cell_names: list[str] | None = None
+
+    for slot in ("data", "data.signaling", "data.raw"):
+        if slot in attrs and attrs[slot].get("type") != "null":
+            try:
+                mat, rnames, cnames = _extract_matrix_and_dimnames(attrs[slot])
+                if mat is not None and hasattr(mat, "shape") and 0 not in mat.shape:
+                    mat_t = mat.T
+                    X_mat = mat_t.tocsr() if sp.issparse(mat_t) else np.asarray(mat_t, dtype=np.float32)
+                    gene_names = rnames
+                    cell_names = cnames
+                    break
+            except Exception:
+                continue
+
+    meta_df = scc_data.get("meta")
+    coords_df = scc_data.get("coordinates")
+    idents = scc_data.get("idents")
+
+    if X_mat is None:
+        n_cells = len(meta_df) if meta_df is not None else (len(coords_df) if coords_df is not None else 0)
+        if n_cells == 0:
+            raise ValueError("SpatialCellChat object contains no cells or expression matrix.")
+        X_mat = sp.csr_matrix((n_cells, 1), dtype=np.float32)
+        gene_names = ["Placeholder_Gene"]
+
+    n_cells, n_genes = X_mat.shape
+    if not gene_names or len(gene_names) != n_genes:
+        gene_names = [f"Gene_{i+1}" for i in range(n_genes)]
+    if not cell_names or len(cell_names) != n_cells:
+        if meta_df is not None and len(meta_df) == n_cells:
+            cell_names = [str(i) for i in meta_df.index]
+        elif coords_df is not None and len(coords_df) == n_cells:
+            cell_names = [str(i) for i in coords_df.index]
+        else:
+            cell_names = [f"Spot_{i+1}" for i in range(n_cells)]
+
+    obs_df = meta_df.copy() if (meta_df is not None and len(meta_df) == n_cells) else pd.DataFrame(index=cell_names)
+    obs_df.index = pd.Index(cell_names, name="cell_id")
+
+    if idents is not None and len(idents) == n_cells and "cell_type" not in obs_df.columns:
+        obs_df["cell_type"] = pd.Categorical(idents)
+
+    # Extract numeric cell-type proportion columns if present in meta (e.g. from makeGridSpatialCellChat)
+    if idents is not None:
+        unique_idents = sorted(set(str(x) for x in idents))
+        prop_cols = [
+            c for c in unique_idents if c in obs_df.columns and pd.api.types.is_numeric_dtype(obs_df[c])
+        ]
+    else:
+        prop_cols = []
+
+    var_df = pd.DataFrame(index=pd.Index(gene_names, name="gene"))
+    adata = ad.AnnData(X=X_mat, obs=obs_df, var=var_df)
+
+    if coords_df is not None and len(coords_df) == n_cells:
+        adata.obsm["spatial"] = coords_df[["x", "y"]].to_numpy(dtype=np.float64)
+
+    if len(prop_cols) >= 2:
+        prop_mat = obs_df[prop_cols].to_numpy(dtype=np.float64)
+        row_sums = prop_mat.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        adata.obsm["cell_type_proportions"] = pd.DataFrame(
+            prop_mat / row_sums, index=adata.obs_names, columns=prop_cols
+        )
+
+    # Extract dr (dimensional reductions) if present in SpatialCellChat object
+    if "dr" in attrs and attrs["dr"].get("type") != "null":
+        dr_attrs = attrs["dr"].get("attributes") or {}
+        if "names" in dr_attrs and dr_attrs["names"].get("data") is not None:
+            dr_names = [str(x) for x in dr_attrs["names"]["data"]]
+            for dname, dobj in zip(dr_names, attrs["dr"].get("data", [])):
+                try:
+                    emb_mat, _, _ = _extract_matrix_and_dimnames(dobj)
+                    emb_arr = np.asarray(emb_mat, dtype=np.float32)
+                    if emb_arr.shape[0] == n_cells and emb_arr.shape[1] >= 2:
+                        key = f"X_{dname.lower()}" if not dname.lower().startswith("x_") else dname.lower()
+                        adata.obsm[key] = emb_arr
+                except Exception:
+                    continue
+
+    adata.uns["spatial_cellchat"] = scc_data
     return adata
 
 
@@ -345,11 +470,13 @@ def load_dataset(path: str | Path) -> ad.AnnData:
         class_name = raw_rds.get("class_name", "")
         if class_name == "Seurat":
             adata = _parse_seurat_rds(raw_rds)
+        elif class_name in ("SpatialCellChat", "CellChat"):
+            adata = _parse_spatial_cellchat_rds(raw_rds)
         elif class_name in ("SingleCellExperiment", "SummarizedExperiment", "RangedSummarizedExperiment"):
             adata = _parse_sce_rds(raw_rds, file_path)
         else:
             raise ValueError(
-                f"Unsupported RDS object class '{class_name}'. Expected 'Seurat' or 'SingleCellExperiment'."
+                f"Unsupported RDS object class '{class_name}'. Expected 'Seurat', 'SpatialCellChat', or 'SingleCellExperiment'."
             )
     else:
         raise ValueError(
