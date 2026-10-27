@@ -1,0 +1,27 @@
+# Core web framework & interactive plotting
+streamlit>=1.38.0
+plotly>=5.20.0
+
+# Single-cell analysis & dimensionality reduction
+scanpy>=1.10.0
+anndata>=0.10.0
+phate>=1.0.11
+umap-learn>=0.5.5
+scikit-learn>=1.3.0
+
+# File format readers (.h5, .h5ad, Seurat & SingleCellExperiment .rds)
+h5py>=3.10.0
+rds2py>=0.6.0
+singlecellexperiment>=0.4.0
+summarizedexperiment>=0.4.0
+biocframe>=0.5.0
+delayedarray>=0.4.0
+hdf5array>=0.4.0
+multiassayexperiment>=0.4.0
+
+# Scientific computing & data structures
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+matplotlib>=3.8.0
+seaborn>=0.13.0

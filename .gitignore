@@ -1,0 +1,55 @@
+# Ignore AI prompt file
+prompt-oct272026.md
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Streamlit & Jupyter
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Single-cell data files (keep sample_data if tracked, ignore user local datasets)
+*.h5
+*.h5ad
+*.rds
+*.RData
+*.loom
+!sample_data/*.h5
+!sample_data/*.h5ad
+!sample_data/*.rds
